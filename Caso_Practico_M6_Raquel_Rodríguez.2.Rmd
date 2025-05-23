@@ -1,0 +1,606 @@
+---
+title: "vivino"
+alumno: "Raquel Rodríguez Perez"
+output: pdf_document
+date: "2024-07-23"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(lmtest)
+install.packages('corrplot')
+library(corrplot)
+library(tidyverse)
+# <http://rmarkdown.rstudio.com>.
+```
+
+#1.- **Datos**
+
+```{r data}
+
+df <- read.csv('F:/Master Data Science/Modulo 6/Case to solve/df_wines.csv')
+
+glimpse(df)
+
+```
+
+#2.- **EDA**
+
+# 2.1 Summary
+```{r eda1, echo=FALSE}
+summary(df) #Realizamos un summary para ver con que tipo de datos estamos trabajando
+
+```
+
+# 2.2 Eliminación columna innecesaria
+```{r}
+#Eliminamos la columna X ya que solamente es el conteo de las lineas del dataset.
+df$X <- NULL
+```
+
+# 2.3 Buscar y limpieza de nulos
+```{r}
+# Verificar valores nulos
+colSums(is.na(df))
+```
+
+# 2.4 Buscar duplicados
+
+```{r}
+# Verificar valores duplicados
+sum(duplicated(df))
+```
+
+#2.5 Modificación de variables
+
+```{r}
+
+# Convertir variables categóricas a factores
+df$Country <- as.factor(df$Country)
+df$Region <- as.factor(df$Region)
+df$Winery <- as.factor(df$Winery)
+df$wine_type <- as.factor(df$wine_type)
+
+
+# Agrupación de los años en 5 categorías
+# Definir los cortes para los grupos de años
+df$Year_Group <- cut(df$Year1, 
+                     breaks = quantile(df$Year1, probs = seq(0, 1, length.out = 6), na.rm = TRUE), 
+                     include.lowest = TRUE,
+                     labels = c("Muy Antiguo", "Antiguo", "Medio", "Reciente", "Muy Reciente"))
+
+# Convertir en factor
+df$Year_Group <- as.factor(df$Year_Group)
+
+# Ver la distribución de los grupos
+table(df$Year_Group)
+```
+
+
+
+# 2.6 Revisamos los datos una vez limpios
+```{r}
+# Resumen estadístico de las variables numéricas
+summary(df %>% select(Rating, NumberOfRatings, Price, Year_Group))
+```
+
+# 2.7 Graficos
+Realizamos algunos gráficos para terminar de conocer nuestros datos
+```{r}
+# Histograma del precio del vino
+ggplot(df, aes(x = Price)) +
+  geom_histogram(bins = 50, fill = "purple", color = "black", alpha = 0.7) +
+  labs(title = "Distribución de Precios de los Vinos", x = "Precio (€)", y = "Frecuencia") +
+  theme_minimal()
+
+# Histograma de la calificación
+ggplot(df, aes(x = Rating)) +
+  geom_histogram(bins = 30, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Distribución de Calificaciones de los Vinos", x = "Calificación", y = "Frecuencia") +
+  theme_minimal()
+
+# Boxplot del año de cosecha
+ggplot(df, aes(x = as.factor(1), y = Year1)) +
+  geom_boxplot(fill = "orange", alpha = 0.7) +
+  labs(title = "Boxplot del Año de Cosecha", x = "", y = "Año") +
+  theme_minimal()
+
+#Gráfico de la distribución de los grupos de años
+ggplot(df, aes(x = Year_Group, fill = Year_Group)) +
+  geom_bar(alpha = 0.7) +
+  labs(title = "Distribución de los Grupos de Años de Cosecha",
+       x = "Grupo de Años",
+       y = "Cantidad de Vinos") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Oculta la leyenda ya que los colores corresponden al eje X
+
+
+```
+
+# 2.8 Correlaciones
+```{r}
+# Matriz de correlación
+cor_matrix <- cor(df %>% select(Rating, NumberOfRatings, Price, Year1))
+
+# Mapa de calor de correlación
+cor_matrix
+corrplot(cor_matrix, method = "circle", type = "upper", tl.cex = 0.8, col = colorRampPalette(c("blue", "white", "red"))(200))
+```
+
+
+
+#3.- ***Modelo***
+
+##3.1.- ***Train & Test***
+```{r}
+# Establecer semilla para reproducibilidad
+set.seed(123)
+
+# Crear índices para división 70-30
+train_Index <- createDataPartition(df$Price, p = 0.7, list = FALSE)
+
+# Crear conjuntos de entrenamiento y prueba
+train_df <- df[train_Index, ]
+test_df <- df[-train_Index, ]
+
+# Verificar tamaños
+cat("Tamaño del conjunto de entrenamiento:", nrow(train_df), "\n")
+cat("Tamaño del conjunto de prueba:", nrow(test_df), "\n")
+
+```
+
+
+```{r}
+# Separar variables independientes y dependiente, escalar las variables numéricas para que estén en la misma magnitud y seleccionar todas las variables que vamos a utilizar.
+X_train <- train_df %>%
+  mutate(
+    Rating_sc = scale(Rating),                # Escala la calificación
+    NumberOfRatings_sc = scale(NumberOfRatings) # Escala el número de calificaciones
+  ) %>%
+  # Seleccionamos las variables escaladas y las variables categóricas, incluyendo 'Year_Group'
+  select(Rating_sc, NumberOfRatings_sc, Year_Group, wine_type)
+
+# La variable dependiente sigue siendo el precio original
+y_train <- train_df$Price
+
+
+```
+
+
+```{r}
+# comprobamos que la mean de todas las variables es 0.
+summary(X_train)
+```
+
+
+```{r}
+# Hacemos lo mismo para test
+X_test <- test_df %>%
+  mutate(
+    Rating_sc = scale(Rating),
+    NumberOfRatings_sc = scale(NumberOfRatings),
+    Year1_sc = scale(Year1),
+  ) %>%
+  select(Rating_sc, NumberOfRatings_sc, Year_Group, wine_type)
+
+y_test <- test_df$Price
+
+# Verificar la estructura
+str(X_train)
+
+```
+
+
+
+##3.2.- ***Modelo***
+```{r}
+# regresión Lineal Simple 
+# Ajustar el modelo de regresión lineal
+modelo <- lm(y_train ~ Rating_sc + NumberOfRatings_sc + Year_Group + wine_type, 
+             data = X_train)
+
+```
+
+
+
+## 3.2.1. **Coeficiente del modelo**
+```{r}
+# Resumen del modelo para ver estadísticas y significancia de los coeficientes
+summary(modelo)
+```
+
+
+##3.2.2 **Evaluación del modelo en el conjunto de prueba**
+
+```{r}
+
+# Realizar predicciones con el modelo
+predicciones <- predict(modelo, newdata = X_test)
+
+predicciones
+```
+
+```{r}
+# Calcular el RMSE
+rmse_val <- sqrt(mean((y_test - predicciones)^2))
+
+
+# Calcular el R-cuadrado en el conjunto de prueba
+r2_val <- 1 - sum((y_test - predicciones)^2) / sum((y_test - mean(y_test))^2)
+
+
+cat("RMSE:", rmse_val, "\n")
+cat("R-cuadrado:", r2_val, "\n")
+```
+
+
+#4.- ***ANOVA***
+```{r}
+#H0= medias son iguales (p<0.05 H0 se rechaza)
+#H1= medias no son iguales (p>0.05 H0 se acepta)
+
+# ANOVA para comparar precios medios según wine_type
+anova <- aov(y_train ~ wine_type, data = X_train)
+anova1 <- aov(y_train ~ Rating_sc, data = X_train)
+anova2 <- aov(y_train ~ Year_Group, data = X_train)
+summary(anova)
+summary(anova1)
+summary(anova2)
+
+```
+
+```{r}
+plot(anova)
+```
+
+```{r}
+plot(anova1)
+```
+
+```{r}
+plot(anova2)
+```
+
+
+##4.1 ***Tukey***
+```{r}
+
+
+# Test post-hoc de Tukey
+tukey <- TukeyHSD(anova)
+tukey2 <- TukeyHSD(anova2)
+
+plot(tukey)
+plot(tukey2)
+print(tukey)
+print(tukey2)
+```
+
+#5 ***CONCLUSIONES***
+
+* Punto 2. - EDA - *
+
+Empezamos en EDA con un summary donde observamos que no tenemos datos NA. Tenemos 5 columnas de tipo character y 5 de tipo number. 
+Información aportada:
+
+X: Nos indica la numeración, es una columna que tendremos que eliminar ya que no aporta inoformación.
+
+Rating: Nos indica que la mayoría de los vinos tienen una calificación entre 3.7 y 4.0, con un promedio cercano a 3.84.
+
+Número de Ratings: Mostramos que aunque la mediana es baja (por ejemplo, 128), existen vinos con muchísimas calificaciones, lo que sugiere una alta dispersión.
+
+Precios: Se observa que la mayoría de los vinos tienen precios asequibles (con mediana inferior a 15-20 €) y algunos vinos muy costosos, dado el rango amplio de precios.
+
+Año de cosecha: Se detectan valores extremos (por ejemplo, un valor de 2030, añadido para vinos mezclados, y el 1961 como cosecha válida) que nos indican que debemos tratar esta variable con cuidado. Por eso este campo lo dividiremos en rangos y lo pasaremos a factor.
+
+Las columnas de tipo character las pasaremos a factor para verificar si pueden aportar valor al modelo.
+
+Revisamos los duplicados y vemos que tampoco tiene.
+
+En primeras pruebas comprobamos que los datos de "Country", "Region" y "Winery" no aportan información para el modelo, así que las he eliminado de las pruebas siguientes.
+
+Revisamos de nuevo que los datos ya están correctos una vez hechas las modificaciones pertinentes.
+
+* Punto 2.7 - Gráficos - * 
+
+Realizamos algunos gráficos para observar nuestros datos:
+
+1. Histograma del Precio del Vino
+La distribución: Nos muestra si los precios están concentrados en un rango específico (por ejemplo, muchos vinos entre 5€ y 15€) y si hay una cola larga (vinos muy caros).
+La distribución del precio se inclina hacia la derecha (cola larga) porque hay menos vinos de precio muy elevado en comparación con la mayoría.
+Conclusión: Este histograma permite ver que la mayor parte de los vinos son asequibles (precios bajos o medios) y cuántos se sitúan en gamas más altas.
+
+2. Histograma de la Calificación
+Rating: Indica que las puntuaciones van de 2.5 a 4.7, y cuál es la media o la zona de mayor densidad.
+Concentración de valores: Permite ver que la mayoría de los vinos tiene calificaciones similares ( entre 3.5 y 4.0).
+
+3. Boxplot del Año de Cosecha
+Distribución de los años: El boxplot muestra la mediana, los cuartiles (Q1 y Q3) y los valores atípicos en la variable Year1.
+Valores atípicos (outliers): Hay vinos con cosechas muy antiguas (p. ej., 1961) o valores que sobresalen ( 2030 para mezclas especiales), se verán como puntos fuera del rango.
+Conclusión: Ayuda a entender cuán amplias son las cosechas representadas en el dataset, por ese motivo lo hemos separado por rangos.
+
+4. Gráfico de la Distribución de los Grupos de Años
+Frecuencia de cada grupo: Muestra cuántos vinos pertenecen a cada categoría de Year_Group (“Muy Antiguo”, “Antiguo”, “Medio”, “Reciente” y “Muy Reciente”).
+Comparación entre grupos: Indica la proporción de vinos en cada intervalo de años, lo cual puede ser importante para posteriores análisis de precios o calidades por grupo de añada.
+Conclusión: Facilita la comprensión de cómo se ha categorizado la variable año y la presencia de cada grupo de cosecha en el conjunto de datos.
+
+* Punto 2.8 - Correlación - * 
+A continuación realizamos un gráfico de relación para los 
+
+Al realizar la correlación observamos que la correlación mas alta está entre el precio y el Rating, aunque tampoco es excesivamente elevada ya que es de 0.62.
+
+* Punto 3 - Modelo - * 
+* Punto 3.1 - Train y Test - *
+Primero realizamos la división de datos en conjuntos de entrenamiento (70%) y prueba (30%).
+A continuación aplicamos el escalado de variables numéricas (Rating y NumberOfRatings) para homogeneizar su magnitud y la conversión de Year1 a Year_Group para categorizar los años en intervalos.
+Se realizan los mismos pasos tanto para el train como para test.
+
+* Punto 3.2 - Modelo - *
+Aplicamos nuestro modelo de regresión lineal y realizamos un summary para ver la información que nos proporciona nuestro modelo:
+
+Medidas Globales del Modelo
+Residual standard error: 13.56. Esto quiere decir que el modelo se desvían del precio real en aproximadamente 13.56€, lo cual es un numero muy elevado teniendo en cuenta el precio promedio de los vinos que hemos visto cuando realizavamos el EDA.
+
+R-cuadrado (Multiple R-squared): 0.4924. Esto nos indica el porcentaje de la variación del precio que explica nuestro modelo. Esto quiero decir que nos faltaria sobre un 50% de información que puede influir sobre el precio de los vinos.
+
+F-statistic: 993, p < 2.2e-16.Nos indica que el modelo en su conjunto es altamente significativo, lo que significa que las variables seleccionadas tienen un efecto conjunto relevante sobre el precio.
+
+Sobre los Coeficientes del Modelo
+Intercept:tiene un valor de 33.4862
+Lo que quiere decir que cuando todas las variables predictoras se encuentran 0(par variables escaladas), el precio promedio estimado es de 33.49€ 
+Por lo cual este valor base nos sitúa en un punto de partida sobre el cual se ajustan los efectos del resto de variables.
+
+Rating_sc:
+Valor: 10.0747 Lo que significa que por cada incremento de una unidad en el Rating escalado, se espera que el precio aumente en aproximadamente 10.07€.
+Su valor de significancia es muy alto (p < 2e-16)
+Es un predictor fuerte del precio, lo que indica que los vinos mejor evaluados tienden a tener precios más altos.
+
+NumberOfRatings_sc:
+Valor: -0.1110 Lo que significa que el número de calificaciones no muestra un efecto relevante sobre el precio
+Y su p-valor no es significativo (p = 0.441)
+
+Year_Group:
+Year_GroupAntiguo:  -9.4818
+Year_GroupMedio:  -13.6541
+Year_GroupReciente:  -17.3695
+Year_GroupMuy Reciente: -19.6189
+Y todos tiene un p-valor altamente significativos (p < 2e-16)
+Al tener un valor negativo, indican que, comparados con el grupo de referencia (el nivel omitido, el grupo más antiguo), los vinos en grupos más recientes tienen precios más bajos.
+Información sobre los datos:
+La antigüedad del vino influye de manera importante en el precio.
+
+wine_type:
+wine_typeespumoso: 7.9201, altamente significativo
+wine_typerosado: -0.6372, no significativo
+wine_typetinto: -0.4613, no significativo
+El hecho de que "espumoso" tenga un coeficiente positivo y significativo indica que, en promedio, los vinos espumosos se valoran aproximadamente 7.92€ más que el grupo de referencia.
+Los otros tipos (rosado y tinto) no muestran diferencias significativas en precio respecto al grupo de referencia.
+Información sobre los datos:
+El tipo de vino influye en el precio, pero en este modelo solo la categoría "espumoso" se destaca significativamente.
+
+
+A continuación realizamos las predicciones de nuestro modelo, calculamos el RMSE y el R-cuadrado sobre nuestros datos de test.
+
+RMSE: 13.40956. Indica que, en promedio, las predicciones del modelo difieren del precio real por aproximadamente 13.41€. Ya que la mayor parte de los vinos tiene un precio inferior a 30€, este rango de error es algo, lo que nos sugiere que hay que mejorar el margen de precisión de nuestro modelo.
+
+R-cuadrado: 0.4850635.Este valor indica que aproximadamente el 48.5% de la variabilidad en los precios de los vinos se explica mediante las variables incluidas en el modelo.
+Lo cual quiere decir que el modelo capta parte de la variación en los precios, pero más de la mitad de la variabilidad (alrededor del 51%) se debe a otros factores no incluidos.
+
+* Punto 4 - ANOVA - * 
+ ANOVA sobre wine_type:
+En el Factor (wine_type):
+Los resultados muestran que el tipo de vino explica una cantidad significativa de la variación en los precios, con un promedio de diferencia (Mean Sq) considerable y un F value muy alto que respalda la significación estadística (p < 2e-16).
+
+En los Residuales:
+La gran cantidad de variabilidad no explicada (sum Sq de Residuals y su Mean Sq) indica la presencia de otras fuentes de variación en los precios, pero en comparación, el factor wine_type tiene un efecto claramente destacado.
+
+En conclusión, este ANOVA nos indica que existen diferencias muy significativas en los precios medios entre los distintos tipos de vino. Además, los valores específicos (Df, suma de cuadrados, etc.) nos permiten cuantificar cuánto aporta el factor wine_type en comparación con la variación interna (error) de los datos.
+
+ ANOVA sobre Rating_sc:
+Para Rating_sc:
+La alta suma de cuadrados y el elevado F value (5780) demuestran que la calificación escalada explica una gran parte de la variación en el precio. El efecto es muy significativo (p < 2e-16), lo que significa que a medida que cambia la calificación, se observa un cambio consistente en el precio.
+
+Para los Residuales:
+La variación residual (con un Mean Sq de 223) es relativamente pequeña en comparación con la variación explicada por Rating_sc, lo que refuerza que la calificación es un predictor muy fuerte.
+
+En conjunto, este test ANOVA nos indica que Rating_sc es un factor determinante para explicar la variación en el precio de los vinos, ya que la mayor parte de la variabilidad atribuible a este predictor es significativamente mayor que la variación que queda sin explicar.
+
+ ANOVA sobre Year_Group:
+Para Year_Group:
+La variable Year_Group explica 740198 unidades de variación en los precios, con un promedio de 185049 unidades por cada nivel. El estadístico F (656.7) y su valor p (<2e-16) indican que las diferencias entre los grupos de años son extremadamente significativas, es decir, el grupo de años al que pertenece un vino tiene un efecto muy relevante en su precio.
+
+Variabilidad Residual:
+La variabilidad que no se explica por Year_Group es de 2597372, con un Mean Sq de 282. Esto muestra que, a pesar del fuerte efecto del grupo de años, existe una cantidad considerable de variación en el precio atribuible a otros factores.
+
+En conjunto, este test ANOVA nos indica que la categorización de los vinos en grupos de años aporta información muy significativa para explicar las diferencias en precios, evidenciando que la edad es un factor determinante en la valoración de los vinos.
+
+Gráficos de los ANOVA
+Sobre los Q-Q plots (Quantile-Quantile plots):
+Normalidad de los residuos: Hay indicios de que los residuos no son perfectamente normales, especialmente en los valores más extremos. Esto sugiere que la hipótesis de normalidad podría no cumplirse de forma estricta.
+Posibles outliers o colas pesadas: La presencia de vinos con precios muy elevados (o calificaciones muy extremas) podría estar influyendo en la forma de la distribución de los residuos.
+
+Sobre los Scale-location (homocedasticidad (varianza constante de los errores)):
+Sobre el Rating_sc: 
+Línea Roja (Tendencia): Debería ser aproximadamente horizontal. Esto indicaría que la varianza de los residuos es constante a lo largo del rango de los valores ajustados. Pero en nuestro gráfico forma una "V", lo que nos sugiere que hay heterocedasticidad en los datos.
+En la dispersión de los puntos se puede observar que existe una mayor cantidad de puntos concentrados en la parte derecha del gráfico, lo que puede indicar que en esos valores existe una mayor variabilidad.
+Y los puntos que se encuentran muy alejados de la línea roja los puede detectar como valores atípicos. Estos valores pueden influir en la heterocedasticidad.
+La presencia de heterocedasticidad en este gráfico "Scale-Location" sugiere que los resultados de este ANOVA podrían no ser completamente confiables.
+
+Sobre wine_type:
+Línea Roja (Tendencia): La línea roja muestra una ligera tendencia ascendente. Esto podría sugerir una leve heterocedasticidad, donde la varianza de los residuos aumenta ligeramente con los valores ajustados. Sin embargo, la pendiente es bastante suave, lo que podría indicar que la heterocedasticidad no es muy severa.
+En la dispersión de los puntos se puede observar 3 columnas de puntos, esto se debe a que la variable wine_type solo contiene 3 valores únicos. También se puede observar, que la dispersión de los puntos en la parte derecha del grafico es un poco mayor, que la dispersión de los puntos en la parte izquierda.
+Y los puntos más alejados de la lénea roja también podrían ser calificados de atípicos y pueden influir en la heterocedasticidad.
+Se podría decir que la heterocedasticidad presente, no es muy alta.
+
+Sobre Year_Group:
+Muy parecido al de wine_type.
+
+* Punto 4.1 - Tukey - * 
+Sobre los Residuals vs Fitted:
+Este gráfico nos ayuda a evaluar la homocedasticidad (varianza constante de los errores) y la linealidad del modelo ANOVA.
+Sobre Rating_sc:
+Heterocedasticidad: la forma de "V" de la línea roja, y la mayor dispersión en los valores altos, son indicios de heterocedasticidad.
+No linealidad: la forma de "V" de la línea roja, también podría indicar que existe no linealidad en los datos.
+Valores atípicos: los valores etiquetados con números son candidatos a ser valores atípicos.
+
+Sobre wine_type:
+Posible Heterocedasticidad: La dispersión no uniforme de los puntos sugiere que la varianza de los residuos podría no ser constante.
+Leve Desviación de la Linealidad: La ligera tendencia descendente de la línea roja podría indicar una leve desviación de la linealidad perfecta.
+Valores Atípicos: La presencia de puntos etiquetados indica posibles valores atípicos que podrían influir en el modelo.
+
+Sobre Year_Group:
+muy similar a wine_type.
+
+
+Como hemos comprobado que tenemos heterocedasticidad en rating_sc, realizaremos en test de Tukey con wine_type y Year_Group.
+El test de Tukey realiza comparaciones múltiples entre los grupos de la variable indicada (que en este caso serán wine_type y Year_Group), permitiéndonos identificar cuáles diferencias entre las medias de los grupos son estadísticamente significativas.
+Columnas del resultado
+diff: Representa la diferencia estimada entre las medias de los dos grupos comparados.
+lwr y upr: Son los límites inferior y superior del intervalo de confianza al 95% para la diferencia de medias. Si este intervalo no incluye el 0, indica que la diferencia es estadísticamente significativa.
+adj: Es el p-valor ajustado para comparaciones múltiples.
+
+Para wine_type:
+espumoso-blanco
+diff = 7.4002658: Los vinos espumosos tienen, en promedio, precios 7.40€ más altos que los vinos blancos.
+Intervalo (5.33, 9.47): La diferencia es robusta y significativa.
+p adj = 0.0000000: La diferencia es altamente significativa.
+
+rosado-blanco
+diff = -6.4412138: Los vinos rosados tienen, en promedio, precios 6.44€ menores que los vinos blancos.
+Intervalo (-9.45, -3.44): El hecho de que el intervalo sea completamente negativo confirma la diferencia significativa.
+p adj = 0.0000002: Es una diferencia estadísticamente significativa.
+
+tinto-blanco
+diff = 7.1363097: Los vinos tintos tienen, en promedio, precios 7.14€ más altos que los vinos blancos.
+Intervalo (6.00, 8.27): La diferencia es clara y significativa.
+p adj = 0.0000000: Indica alta significancia.
+
+rosado-espumoso
+diff = -13.8414796: Los vinos rosados tienen, en promedio, precios 13.84€ menores que los vinos espumosos.
+Intervalo (-17.24, -10.44): El intervalo negativo refuerza que la diferencia es significativa.
+p adj = 0.0000000: Muy significativa.
+
+tinto-espumoso
+diff = -0.2639561: La diferencia entre vinos tintos y espumosos es casi nula.
+Intervalo (-2.22, 1.69): Como el intervalo incluye 0, no se detecta diferencia significativa.
+p adj = 0.9856051: El p-valor alto confirma que no hay diferencia significativa.
+
+tinto-rosado
+diff = 13.5775234: Los vinos tintos tienen, en promedio, precios 13.58€ más altos que los vinos rosados.
+Intervalo (10.65, 16.50): Un intervalo claramente positivo indica una diferencia significativa.
+p adj = 0.0000000: Altamente significativo.
+
+Entonces podemos observar que:
+Los vinos espumosos y tintos tienen precios significativamente mayores que los vinos blancos y rosados.
+La comparación entre tinto y espumoso no muestra diferencia significativa, lo que indica que, en este dataset, esos dos tipos tienen precios muy similares.
+
+
+Para Year_Group:
+Antiguo-Muy Antiguo
+diff = -11.79: Los vinos del grupo “Antiguo” tienen un precio medio 11.79 unidades menor que los del grupo “Muy Antiguo”.
+Intervalo: [-13.17, -10.41]: La diferencia es consistente y significativa.
+p adj = 0.0000000: Altamente significativa.
+
+Medio-Muy Antiguo
+diff = -19.27: Los vinos en “Medio” tienen, en promedio, precios 19.27 unidades menores que los “Muy Antiguo”.
+Intervalo: [-20.81, -17.73]: La diferencia es robusta y no incluye el 0.
+p adj = 0.0000000: Altamente significativa.
+
+Reciente-Muy Antiguo
+diff = -25.36: Los vinos “Reciente” tienen un precio medio 25.36 unidades menor que los “Muy Antiguo”.
+Intervalo: [-26.85, -23.87]: La diferencia es clara y significativa.
+p adj = 0.0000000: Altamente significativa.
+
+Muy Reciente-Muy Antiguo
+diff = -22.01: Los vinos “Muy Reciente” tienen, en promedio, precios 22.01 unidades menores que los “Muy Antiguo”.
+Intervalo: [-23.72, -20.29]: Diferencia significativa.
+p adj = 0.0000000: Altamente significativa.
+
+Medio-Antiguo
+diff = -7.48: Comparado con “Antiguo”, el grupo “Medio” tiene un precio medio 7.48 unidades menor.
+Intervalo: [-8.92, -6.05]: La diferencia es estadísticamente significativa.
+p adj = 0.0000000: Muy significativa.
+
+Reciente-Antiguo
+diff = -13.58: Los vinos “Reciente” tienen un precio medio 13.58 unidades menor que los “Antiguo”.
+Intervalo: [-14.96, -12.19]: La diferencia es consistente y significativa.
+p adj = 0.0000000: Altamente significativa.
+
+Muy Reciente-Antiguo
+diff = -10.22: Los vinos “Muy Reciente” tienen un precio medio 10.22 unidades menor que los “Antiguo”.
+Intervalo: [-11.84, -8.60]: Diferencia clara y significativa.
+p adj = 0.0000000: Altamente significativa.
+
+Reciente-Medio
+diff = -6.09: Los vinos “Reciente” tienen un precio medio 6.09 unidades menor que los “Medio”.
+Intervalo: [-7.63, -4.55]: La diferencia es significativa.
+p adj = 0.0000000: Muy significativa.
+
+Muy Reciente-Medio
+diff = -2.74: Los vinos “Muy Reciente” tienen, en promedio, precios 2.74 unidades menores que los “Medio”.
+Intervalo: [-4.50, -0.98]: Aunque la diferencia es más pequeña, sigue siendo significativa.
+p adj = 0.0002139: Significativa.
+
+Muy Reciente-Reciente
+diff = 3.35: En este caso, los vinos “Muy Reciente” tienen un precio medio 3.35 unidades mayor que los “Reciente”.
+Intervalo: [1.64, 5.07]: El intervalo es completamente positivo, lo que confirma que la diferencia es significativa.
+p adj = 0.0000010: Altamente significativa.
+
+
+Las comparaciones muestran que existen diferencias estadísticamente significativas en los precios entre casi todas las categorías de Year_Group.
+En general, los vinos de grupos más recientes tienen precios significativamente menores que los vinos de grupos más antiguos (por ejemplo, “Medio”, “Reciente” o “Muy Reciente” son más bajos que “Muy Antiguo”).
+Además, la mayoría de las comparaciones muestran diferencias negativas, lo que sugiere que, a medida que avanzamos de “Muy Antiguo” a otros grupos, el precio medio disminuye.
+Y todos los p-valores son muy bajos (todos < 0.001), lo que confirma que las diferencias observadas son altamente significativas.
+
+Gráficos del Test de Tukey:
+Comparaciones por Pares:
+El gráfico muestra las diferencias en las medias para cada par de grupos
+Intervalos de Confianza:
+Cada línea horizontal representa un intervalo de confianza del 95% para la diferencia entre las medias de los dos grupos comparados.
+Si el intervalo de confianza no cruza la línea vertical punteada en 0, significa que hay una diferencia estadísticamente significativa entre las medias de esos dos grupos.
+
+Para wine_type:
+tinto - rosado: El intervalo de confianza se encuentra completamente a la derecha de 0, lo que indica que hay una diferencia estadísticamente significativa entre las medias de los vinos tintos y rosados. La media del vino tinto es significativamente mayor que la del vino rosado.
+
+tinto - blanco: El intervalo de confianza se encuentra completamente a la derecha de 0, lo que indica que hay una diferencia estadísticamente significativa entre las medias de los vinos tintos y blancos. La media del vino tinto es significativamente mayor que la del vino blanco.
+
+rosado - blanco: (Se puede inferir) Si se graficara el intervalo de confianza, se encontraría también a la derecha del 0, indicando que tambien existe una diferencia estadísticamente significativa entre las medias de los vinos rosados y blancos. La media del vino rosado es significativamente mayor que la del vino blanco.
+
+La longitud de los intervalos de confianza indica la magnitud de las diferencias entre las medias. Intervalos de confianza más largos sugieren diferencias más grandes.
+
+El gráfico especifica un nivel de confianza del 95%, lo que significa que estamos 95% seguros de que los intervalos de confianza contienen las verdaderas diferencias entre las medias.
+
+
+Para Year_Group:
+Muy Reciente - Reciente: El intervalo de confianza se encuentra completamente a la izquierda de 0, lo que indica que hay una diferencia estadísticamente significativa entre las medias de los grupos "Muy Reciente" y "Reciente". La media del grupo "Muy Reciente" es significativamente menor que la del grupo "Reciente".
+
+Reciente - Muy Antiguo: El intervalo de confianza se encuentra completamente a la izquierda de 0, lo que indica que hay una diferencia estadísticamente significativa entre las medias de los grupos "Reciente" y "Muy Antiguo". La media del grupo "Reciente" es significativamente menor que la del grupo "Muy Antiguo".
+
+En los intervalos de confiaza se observa que la diferencia entre "Reciente" y "Muy Antiguo" es mayor que la diferencia entre "Muy Reciente" y "Reciente".
+
+El gráfico especifica un nivel de confianza del 95%, lo que significa que estamos 95% seguros de que los intervalos de confianza contienen las verdaderas diferencias entre las medias.
+En resumen:
+
+Hay diferencias estadísticamente significativas entre las medias de todos los pares de grupos de años.
+La media del grupo "Muy Reciente" es significativamente menor que la media del grupo "Reciente".
+La media del grupo "Reciente" es significativamente menor que la media del grupo "Muy Antiguo".
+La mayor diferencia se observa entre los grupos "Reciente" y "Muy Antiguo".
+
+
+
+Conclusión Final:
+
+El modelo de regresión lineal, ajustado utilizando Rating_sc, NumberOfRatings_sc, Year_Group y wine_type, muestra que:
+Rating_sc es un predictor muy fuerte, con un efecto positivo considerable en el precio.
+
+Year_Group influye significativamente, con coeficientes negativos para grupos de añadas más recientes, lo que sugiere que los vinos de añadas antiguas tienden a tener precios más altos.
+wine_type también es determinante, especialmente el hecho de que los vinos espumosos se valoran significativamente más que los blancos y rosados, mientras que la diferencia entre tintos y espumosos no resulta significativa.
+
+Con un R-cuadrado cercano a 0.49 y un RMSE de aproximadamente 13.41, el modelo explica cerca del 48-49% de la variabilidad en el precio. Esto indica que, aunque las variables seleccionadas capturan aspectos importantes, existen otros factores no modelados que influyen en la determinación del precio.
+
