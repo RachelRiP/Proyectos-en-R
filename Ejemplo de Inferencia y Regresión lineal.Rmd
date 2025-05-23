@@ -1,0 +1,164 @@
+---
+title: "Ejemplo de Inferencia y Regresión lineal"
+author: "Raquel"
+date: "2025-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#Ejemplo práctico: Precio de Viviendas.
+#Imagina que estás tratando de predecir el precio de una vivienda (Y) en función de su tamaño en metros cuadrados(X1), y el número de habitaciónes (X2)
+
+#datos del ejemplo
+set.seed(456)
+n <- 100
+Size <- runif(n, 50, 200)   #Tamaño en metros2
+Rooms <- rpois(n, 3)        #Número de habitaciones
+Error <- rnorm(n, 0, 10000)
+Price <- 50000 + 3000*Size + 20000*Rooms + Error
+
+housing_data <- data.frame(Price, Size, Rooms)
+```
+
+Regresión lineal Múltiple
+```{r}
+#lm(Y ~ X1 + X2, dataframe)
+lm_housing <- lm(Price ~ Size + Rooms, data=housing_data)
+summary(lm_housing)
+```
+
+Interpretación:
+- Residuos: diferencia entre los valores realzes de la variable dependiente y los valores predichos por el modelo
+- Intercept: Valor esperado de la variable dependiente (precio) cuando los parámetros son 0. (X1*0 + X2*0 ... =Y )
+- Coeficientes: Por cada 1m2, el precio sube 2995€. Por cada habitación, el precio sube 20k€
+- Standard error: dispersión de residuos
+- R^2: Explicamos un 99.5% de la variablilidad en los precios con este modelo.
+- F- stats: Comparación con un modelo que tiene ninguna de las variables predictoras. Un valor alto (como 9510) indica que almenos una variable de nuestro modelo es útil.
+-  P-Value: significativo estadísticamene si es bajo
+
+```{r}
+#generamos datos del ejemplo nuevos
+set.seed(123)
+n1 <- 100
+size <- rnorm(n1, mean=50, sd=10)   #Tamaño en metros2
+rooms <- rpois(n1, lambda=3)        #Número de habitaciones
+price <- 50000 + 3000*size + 20000*rooms + rnorm(n1, mean=0, sd=10000)
+
+data <- data.frame(price, size, rooms)
+
+#Crear el modelo 
+lm_model <-lm(price ~ size + rooms, data=data)
+
+#Inferencia en regresión:
+summary(lm_model)
+```
+```{r}
+# Bondad de ajuste
+#R2 y R2 ajustado ya se muestren en el resumen
+#Aquí también podemos calcular el error cuadrático medio (MSE)
+mse <- mean(lm_model$residuals^2)
+mse
+sqrt(mse)
+```
+Diagnostico:
+Gráfico de residuos vs valores ajustados
+```{r}
+ggplot(data, aes(x=lm_model$fitted.values, y=lm_model$residuals)) +
+  geom_point(color = "hotpink") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgreen") + 
+  theme_minimal() +
+  labs(title = "Residuos vs Valores Ajustados", 
+       x = "Valores Ajustados",
+       y = "Residuos")
+```
+
+- residuos cerca del 0, sin valores atípicos
+- dispersión aleatoriamente alrededor de la línea horizontal en 0 (no "U")
+
+Gráfico Q-Q
+
+```{r}
+qqnorm(lm_model$residuals)
+qqline(lm_model$residuals)
+```
+residuos (puntos) que deberían seguir la q-q-line (--> distribución normal)
+
+Breush-Pagan para detectar la heterocedasticidad (varianza no constante a lo largo de las observaciones)
+```{r}
+install.packages("lmtest")  # Si no lo tienes instalado
+library(lmtest)  # Cargar el paquete
+
+```
+
+```{r}
+bptest(lm_model)
+```
+hay heterocedasticidad si rechazamos H0 (p-value < 0.05). En este caso no hay ya que no se rechaza H0
+
+Puntos influyentes --> cuales de las observaciones afectan más a los coeficientes de regresión, etc.
+
+```{r}
+# Calculando el estadístico de Cook
+cooksd <- cooks.distance(lm_model)
+```
+
+```{r}
+#Visualizando puntos influyentes
+plot(cooksd, pch="*", cex=2, col = "darkgreen", main= "Puntos Influyentes mediante el Estadístico de Cook")
+abline(h = 4*mean(cooksd, na.rm = T), col = "hotpink")
+```
+cerca de 0 --> ningún efecto
+mayor que 4 veces el promedio --> influyentes
+
+
+
+Que hacemos cuando falla todo esto?
+- Revisar el dataset (valores atípicos, puntos influyentes, revisar piperline)
+- Revisar setup de la regresión (p.ej. eliminar coeficientes correlacionados)
+- Modelos lineales pueden no ser adecuados!
+
+
+Validación:
+Usaremos validación cruzada para evaluar el rendimiento del modelo
+
+```{r}
+library(caret)
+```
+
+```{r}
+#usando validación cruzada de 10-folds (equilibrio entre precisión y ficiencia computacional)
+set.seed(123)
+#entrenar modelo con training dataset (modelo + validación)
+control <- trainControl(method = "cv", number = 10)
+train_model <- train(price ~ size + rooms, data = data, method = "lm", trControl = control)
+
+#Resultados
+train_model$results
+
+summary(train_model)
+
+
+```
+
+Validación:
+-nuevos datos!
+- más realizta que simplemente ajustarlo a los datos de entrenamiento
+
+```{r}
+#Predicciones:
+predict(lm_model, newdata = data.frame(
+  rooms = c(2),
+  size = c(200)
+))
+
+predict(train_model, newdata = data.frame(
+  rooms = c(2),
+  size = c(200)
+))
+```
+
