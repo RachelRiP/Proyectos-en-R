@@ -1,0 +1,138 @@
+---
+title: "U4 Diseño Experimentos"
+output:
+  html_document: default
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+date: "2024-10-26"
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)#Desactiva la notacion cientifica
+rm(list = ls())
+```
+
+Una compañía textil utiliza diversos telares para la producción de telas donde se desea que los telares sean homogéneos con el objeto de producir tela de una resistencia uniforme, se quiere estudiar la variación significativa en la resistencia de la tela debida a la utilización y antiguedad de 5 telares.
+
+OBJETIVO: Variación de la resistencia en los telares
+FACTOR: Telares (5 niveles)
+V.RESPUESTA: Resistencia
+DISEÑO: Diseño de efectos fijos unifactorial
+U.MUESTRALES: 8 u por telar (40 en total)
+
+1.- Library
+
+```{r librerias, include=FALSE, echo=FALSE}
+library("tidyverse")
+library(dplyr)
+library(boot)
+library(ggplot2)
+library(lattice)
+library(caret)
+```
+
+2.- Carga de datos
+
+```{r data}
+
+valores <- c("1", "2", "3", "4", "5")
+repeticiones <- c(8, 8, 8, 8, 8)
+
+df = data.frame(telares = rep(valores, each=repeticiones),
+                   resistencia= c(51,49,50,49,51,50,48,52,
+                                  56,60,56,56,57,58,59,61,
+                                  48,50,53,44,45,46,47,47,
+                                  47,48,49,44,43,43,42,45,
+                                  43,43,46,47,45,46,44,45))
+
+head(df)
+table(df$telares)
+```
+3.- EDA
+summary
+```{r EDA}
+
+#head(df)
+t(summary(df$resistencia))
+
+```
+
+boxplot
+```{r boxplot}
+gr1 <-ggplot(df, aes(x = telares,y = resistencia)) + 
+  geom_boxplot() 
+gr1
+
+gr2 <-ggplot(df, aes(x = resistencia)) + 
+  geom_histogram(fill = "red") +
+  #scale_x_continuous(limits = c(1.1, 2.3), breaks = seq(1.1, 2.3, 0.1)) +
+  labs(title = "Telares")
+
+gr2
+```
+
+4.- Normalidad
+```{r, echo=FALSE}
+
+qqnorm(df[df$telares == "1","resistencia"], main = "1")
+qqline(df[df$telares == "1","resistencia"])
+qqnorm(df[df$telares == "2","resistencia"], main = "2")
+qqline(df[df$telares == "2","resistencia"])
+qqnorm(df[df$telares == "3","resistencia"], main = "3")
+qqline(df[df$telares == "3","resistencia"])
+qqnorm(df[df$telares == "4","resistencia"], main = "4")
+qqline(df[df$telares == "4","resistencia"])
+qqnorm(df[df$telares == "5","resistencia"], main = "5")
+qqline(df[df$telares == "5","resistencia"])
+```
+
+shapiro-wilk
+```{r shapiro}
+# H0= Se distribuye según una normal (p<0.05 rechazamos H0)
+# H1= No se distribuye según una normal (p>0.05 aceptamos H0)
+
+tapply(df$resistencia,df$telares,shapiro.test)
+```
+
+5.- Homoscedasticidad
+```{r homocedasticidad}
+library(car)
+
+#H0= La varianza de los grupos son iguales (p<0.05 rechazamos la H0)
+#H1= La varianza de los grupos no son iguales (p>0.05 aceptamos la H0)
+
+# convertimos la variable grupal en factor.
+df$telares <- as.factor(df$telares)
+
+#glimpse(df)
+
+leveneTest(y=df$resistencia,group=df$telares)
+```
+
+6.- ANOVA
+```{r ANOVA}
+
+#H0= medias son iguales (p<0.05 H0 se rechaza)
+#H1= medias no son iguales (p>0.05 H0 se acepta)
+
+anova <- aov(df$resistencia ~ df$telares)
+summary(anova)
+plot(anova)
+```
+
+7.- Tukey
+```{r Tukey}
+# compara por pares de telares y comprueba
+# H0= La media del telar a es igual a la media del telar b (p<0.05 se rechza H0)
+# H1= La media del telar a no es igual a la media del telar b (p>0.05 se acepta H0)
+
+TukeyHSD(anova)
+
+df %>%
+  group_by(telares) %>%
+  summarise(avg_re = mean(resistencia))
+
+plot(TukeyHSD(anova))
+```
